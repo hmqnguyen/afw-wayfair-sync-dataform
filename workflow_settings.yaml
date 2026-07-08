@@ -1,4 +1,5 @@
 defaultProject: allforwood-dev
+dataformCoreVersion: 3.0.0
 defaultDataset: afw_wayfair_fact
 defaultLocation: US
 defaultAssertionDataset: afw_wayfair_fact
