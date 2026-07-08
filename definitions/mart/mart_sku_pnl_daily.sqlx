@@ -1,0 +1,17 @@
+config {
+  type: "table",
+  schema: dataform.projectConfig.vars.mart_dataset,
+  disabled: true,
+  description: "SKELETON — P&L per-SKU/ngày (Wayfair). Ghép doanh thu − COGS (NM5/SKU master) − phí sàn (chờ Settlement API). DISABLED vì thiếu COGS + Settlement.",
+  tags: ["mart", "pnl", "skeleton", "wayfair"]
+}
+
+-- BẬT KHI: (1) có afw_sku_cogs theo sku; (2) có Wayfair Settlement API.
+SELECT
+  f.day AS date, f.sku, f.brand, f.channel, f.region, f.order_channel_type,
+  f.gross_revenue    AS revenue,
+  CAST(0 AS NUMERIC) AS cogs,          -- TODO: afw_sku_cogs × units
+  CAST(0 AS NUMERIC) AS platform_fee,  -- TODO: Wayfair Settlement
+  f.gross_revenue    AS gross_profit   -- TODO: revenue − cogs − fee
+FROM ${ref("fact_sku_pnl_daily")} AS f
+WHERE f.channel = 'Wayfair'

@@ -1,0 +1,11 @@
+{
+  "defaultProject": "allforwood-dev",
+  "defaultDataset": "afw_wayfair_fact",
+  "defaultLocation": "US",
+  "defaultAssertionDataset": "afw_wayfair_fact",
+  "vars": {
+    "raw_dataset": "afw_wayfair_raw", "staging_dataset": "afw_wayfair_staging",
+    "fact_dataset": "afw_wayfair_fact", "master_dataset": "afw_wayfair_master",
+    "mart_dataset": "afw_wayfair_mart"
+  }
+}

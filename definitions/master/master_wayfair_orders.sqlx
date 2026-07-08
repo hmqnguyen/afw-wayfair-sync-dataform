@@ -1,0 +1,22 @@
+config {
+  type: "incremental",
+  schema: dataform.projectConfig.vars.master_dataset,
+  description: "Master Wayfair orders — giữ TẤT CẢ order line, incremental theo _loaded_at. uniqueKey (po_number, part_number).",
+  tags: ["master", "wayfair"],
+  uniqueKey: ["po_number", "part_number"],
+  bigquery: { partitionBy: "order_date", clusterBy: ["sku"] }
+}
+
+SELECT
+  brand, channel, region, order_channel_type, order_type_raw,
+  po_id, po_number, order_id, supplier_id,
+  po_timestamp, order_date, estimated_ship_date, scheduled_delivery_date,
+  sales_channel_name, delivery_method_code, ship_speed, carrier_code,
+  warehouse_id, warehouse_name, warehouse_supplier_id, warehouse_supplier_name,
+  ship_to_city, ship_to_state, ship_to_country, ship_to_postal_code,
+  line_index, part_number, sku, product_name,
+  quantity, unit_price, line_total, piece_count, total_weight,
+  is_cancelled, is_tsca_compliant, custom_comment,
+  _loaded_at
+FROM ${ref("stg_wayfair_orders")}
+${when(incremental(), `WHERE _loaded_at > (SELECT MAX(_loaded_at) FROM ${self()})`)}

@@ -1,0 +1,41 @@
+config {
+  type: "table",
+  schema: dataform.projectConfig.vars.staging_dataset,
+  description: "Staging Wayfair Dropship inventory (kho NM5) — parse castleGate position, snapshot theo ngày. Dedupe (sku, snapshot_date). Expose _loaded_at.",
+  tags: ["staging", "wayfair"],
+  bigquery: { partitionBy: "snapshot_date", clusterBy: ["sku"] }
+}
+
+WITH parsed AS (
+  SELECT
+    brand, _ingested_at,
+    DATE(_ingested_at)                                                  AS snapshot_date,
+    JSON_VALUE(raw_payload, '$.sku')                                    AS sku,
+    JSON_VALUE(raw_payload, '$.supplierPartNumber')                     AS supplier_part_number,
+    JSON_VALUE(raw_payload, '$.productName')                            AS product_name,
+    JSON_VALUE(raw_payload, '$.options')                               AS options,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHandQty') AS INT64)                       AS on_hand_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.allocatedQty') AS INT64)             AS allocated_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStockQty') AS INT64)               AS in_stock_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.fulfillableQty') AS INT64)   AS fulfillable_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.unfulfillableQty') AS INT64) AS unfulfillable_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.unfulfillable.onTransferQty') AS INT64) AS on_transfer_qty
+  FROM ${ref("raw_wayfair_inventory_dropship")}
+  WHERE brand = 'AFW'
+    AND JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate') IS NOT NULL
+),
+
+ranked AS (
+  SELECT *, ROW_NUMBER() OVER (
+    PARTITION BY sku, snapshot_date ORDER BY _ingested_at DESC
+  ) AS rn
+  FROM parsed
+  WHERE sku IS NOT NULL AND sku != ''
+)
+
+SELECT
+  brand, snapshot_date, sku, supplier_part_number, product_name, options,
+  on_hand_qty, allocated_qty, in_stock_qty, fulfillable_qty, unfulfillable_qty, on_transfer_qty,
+  _ingested_at AS _loaded_at
+FROM ranked
+WHERE rn = 1

@@ -1,0 +1,41 @@
+config {
+  type: "incremental",
+  schema: dataform.projectConfig.vars.fact_dataset,
+  description: "Fact P&L by SKU daily (Wayfair) — tổng hợp từ master_wayfair_orders. Grain: brand × channel × region × order_channel_type × sku × day. Fee columns NULL chờ Wayfair Settlement API. Dùng chung bảng cross-channel.",
+  tags: ["fact", "wayfair"],
+  uniqueKey: ["brand", "channel", "region", "order_channel_type", "sku", "day"],
+  bigquery: {
+    partitionBy: "day",
+    clusterBy: ["channel", "sku"],
+    updatePartitionFilter: "day >= DATE_SUB(CURRENT_DATE(), INTERVAL 35 DAY)"
+  }
+}
+
+DECLARE target_date_start DATE DEFAULT DATE_SUB(CURRENT_DATE(), INTERVAL 35 DAY);
+
+WITH revenue_agg AS (
+  SELECT
+    brand,
+    'Wayfair'          AS channel,
+    region,
+    order_channel_type,
+    sku,
+    order_date         AS day,
+    SUM(COALESCE(quantity, 0))    AS units_sold,
+    SUM(COALESCE(line_total, 0))  AS gross_revenue
+  FROM ${ref("master_wayfair_orders")}
+  WHERE order_date >= target_date_start
+    AND COALESCE(is_cancelled, FALSE) = FALSE
+    AND sku IS NOT NULL AND sku != ''
+  GROUP BY brand, region, order_channel_type, sku, order_date
+)
+
+SELECT
+  brand, channel, region, order_channel_type, sku, day,
+  units_sold, gross_revenue,
+  CAST(NULL AS NUMERIC)  AS platform_fee,
+  CAST(NULL AS NUMERIC)  AS fulfillment_fee,
+  CAST(NULL AS NUMERIC)  AS storage_fee,
+  gross_revenue          AS channel_contribution_margin_pre_cogs,
+  CURRENT_TIMESTAMP()    AS _transformed_at
+FROM revenue_agg

@@ -1,0 +1,16 @@
+config {
+  type: "incremental",
+  schema: dataform.projectConfig.vars.master_dataset,
+  description: "Master Wayfair CastleGate inventory SKU-level — snapshot theo NGÀY. uniqueKey (sku, inventory_channel, snapshot_date). Incremental theo _loaded_at.",
+  tags: ["master", "wayfair"],
+  uniqueKey: ["sku", "inventory_channel", "snapshot_date"],
+  bigquery: { partitionBy: "snapshot_date", clusterBy: ["sku"] }
+}
+
+SELECT
+  brand, snapshot_date, sku, supplier_part_number, product_name, options,
+  inventory_channel, on_hand_qty, allocated_qty, unreconciled_qty, in_stock_qty,
+  fulfillable_qty, unfulfillable_qty, expired_qty, held_qty, unpickable_qty, on_transfer_qty,
+  _loaded_at
+FROM ${ref("stg_wayfair_inventory_castlegate")}
+${when(incremental(), `WHERE _loaded_at > (SELECT MAX(_loaded_at) FROM ${self()})`)}

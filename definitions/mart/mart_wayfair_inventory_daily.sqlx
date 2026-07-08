@@ -1,0 +1,32 @@
+config {
+  type: "table",
+  schema: dataform.projectConfig.vars.mart_dataset,
+  description: "Mart Wayfair inventory daily — hợp nhất CastleGate + Dropship (NM5) theo (sku, snapshot_date). Có on_transfer để supply chain theo dõi hàng luân chuyển. Phục vụ quyết định Castlegate 90-day free storage.",
+  tags: ["mart", "wayfair"],
+  bigquery: { partitionBy: "snapshot_date", clusterBy: ["sku"] }
+}
+
+WITH cg AS (
+  SELECT
+    brand, snapshot_date, sku, supplier_part_number, product_name,
+    SUM(IF(inventory_channel = 'castlegate', on_hand_qty, 0))       AS castlegate_on_hand,
+    SUM(IF(inventory_channel = 'castlegate', fulfillable_qty, 0))   AS castlegate_fulfillable,
+    SUM(IF(inventory_channel = 'castlegate', on_transfer_qty, 0))   AS castlegate_on_transfer,
+    SUM(IF(inventory_channel = 'physical_retail', on_hand_qty, 0))  AS physical_retail_on_hand
+  FROM ${ref("master_wayfair_inventory_castlegate")}
+  GROUP BY brand, snapshot_date, sku, supplier_part_number, product_name
+),
+ds AS (
+  SELECT snapshot_date, sku,
+    on_hand_qty     AS dropship_on_hand,
+    fulfillable_qty AS dropship_fulfillable
+  FROM ${ref("master_wayfair_inventory_dropship")}
+)
+SELECT
+  cg.brand, cg.snapshot_date, cg.sku, cg.supplier_part_number, cg.product_name,
+  cg.castlegate_on_hand, cg.castlegate_fulfillable, cg.castlegate_on_transfer,
+  cg.physical_retail_on_hand,
+  ds.dropship_on_hand, ds.dropship_fulfillable,
+  COALESCE(cg.castlegate_on_hand, 0) + COALESCE(ds.dropship_on_hand, 0) AS total_on_hand
+FROM cg
+LEFT JOIN ds ON cg.sku = ds.sku AND cg.snapshot_date = ds.snapshot_date

@@ -1,0 +1,17 @@
+defaultProject: allforwood-dev
+defaultDataset: afw_wayfair_fact
+defaultLocation: US
+defaultAssertionDataset: afw_wayfair_fact
+
+# Kiến trúc 4 lớp nghiệp vụ: Raw (C# ghi) → Staging → Master & Fact (+ Mart)
+#   - C# AfwWayfairSync ghi raw_payload vào raw dataset; Dataform chỉ ĐỌC raw.
+#   - master_dataset RIÊNG (afw_wayfair_master) — tách khỏi fact (theo Lecangs).
+#   - mart_dataset cho bảng tổng hợp BI (inventory, P&L).
+# Dev/prod CÙNG tên dataset (KHÔNG _dev) — tách theo project.
+
+vars:
+  raw_dataset:     afw_wayfair_raw
+  staging_dataset: afw_wayfair_staging
+  fact_dataset:    afw_wayfair_fact
+  master_dataset:  afw_wayfair_master
+  mart_dataset:    afw_wayfair_mart

@@ -1,0 +1,95 @@
+config {
+  type: "table",
+  schema: dataform.projectConfig.vars.staging_dataset,
+  description: "Staging Wayfair orders — parse PO + UNNEST products[] + dedupe (po_number, part_number). channel='Wayfair', region tách US/Canada từ salesChannelName. order_channel_type chuẩn hóa B2B/B2C. Expose _loaded_at.",
+  tags: ["staging", "wayfair"],
+  bigquery: { partitionBy: "order_date", clusterBy: ["sku"] }
+}
+
+WITH parsed AS (
+  SELECT
+    o.brand,
+    o._ingested_at,
+
+    SAFE_CAST(JSON_VALUE(o.raw_payload, '$.id') AS INT64)         AS po_id,
+    JSON_VALUE(o.raw_payload, '$.poNumber')                       AS po_number,
+    SAFE_CAST(JSON_VALUE(o.raw_payload, '$.orderId') AS INT64)    AS order_id,
+    SAFE_CAST(JSON_VALUE(o.raw_payload, '$.supplierId') AS INT64) AS supplier_id,
+
+    ${wayfair.ts("JSON_VALUE(o.raw_payload, '$.poDate')")}        AS po_timestamp,
+    DATE(${wayfair.ts("JSON_VALUE(o.raw_payload, '$.poDate')")})  AS order_date,
+    JSON_VALUE(o.raw_payload, '$.estimatedShipDate')             AS estimated_ship_date,
+    JSON_VALUE(o.raw_payload, '$.scheduledDeliveryDate')         AS scheduled_delivery_date,
+
+    -- Kênh: salesChannelName = 'Wayfair' | 'Wayfair Canada'
+    JSON_VALUE(o.raw_payload, '$.salesChannelName')              AS sales_channel_name,
+    -- region tách từ salesChannelName
+    CASE
+      WHEN JSON_VALUE(o.raw_payload, '$.salesChannelName') LIKE '%Canada%' THEN 'CA'
+      ELSE 'US'
+    END                                                          AS region,
+    -- orderType: null (B2C) | 'B2B' → chuẩn hóa
+    JSON_VALUE(o.raw_payload, '$.orderType')                     AS order_type_raw,
+    CASE
+      WHEN UPPER(IFNULL(JSON_VALUE(o.raw_payload, '$.orderType'), '')) = 'B2B' THEN 'B2B'
+      ELSE 'B2C'
+    END                                                          AS order_channel_type,
+
+    JSON_VALUE(o.raw_payload, '$.deliveryMethodCode')            AS delivery_method_code,
+    JSON_VALUE(o.raw_payload, '$.shippingInfo.shipSpeed')        AS ship_speed,
+    JSON_VALUE(o.raw_payload, '$.shippingInfo.carrierCode')      AS carrier_code,
+
+    JSON_VALUE(o.raw_payload, '$.warehouse.id')                  AS warehouse_id,
+    JSON_VALUE(o.raw_payload, '$.warehouse.name')                AS warehouse_name,
+    JSON_VALUE(o.raw_payload, '$.warehouse.supplier.id')         AS warehouse_supplier_id,
+    JSON_VALUE(o.raw_payload, '$.warehouse.supplier.name')       AS warehouse_supplier_name,
+
+    JSON_VALUE(o.raw_payload, '$.shipTo.city')                   AS ship_to_city,
+    JSON_VALUE(o.raw_payload, '$.shipTo.state')                  AS ship_to_state,
+    JSON_VALUE(o.raw_payload, '$.shipTo.country')                AS ship_to_country,
+    JSON_VALUE(o.raw_payload, '$.shipTo.postalCode')             AS ship_to_postal_code,
+
+    p_offset                                                     AS line_index,
+    JSON_VALUE(p, '$.partNumber')                                AS part_number,
+    JSON_VALUE(p, '$.sku')                                       AS sku,
+    JSON_VALUE(p, '$.name')                                      AS product_name,
+    SAFE_CAST(JSON_VALUE(p, '$.quantity') AS INT64)              AS quantity,
+    SAFE_CAST(JSON_VALUE(p, '$.price') AS NUMERIC)               AS unit_price,
+    SAFE_CAST(JSON_VALUE(p, '$.totalCost') AS NUMERIC)           AS line_total,
+    SAFE_CAST(JSON_VALUE(p, '$.pieceCount') AS INT64)            AS piece_count,
+    SAFE_CAST(JSON_VALUE(p, '$.totalWeight') AS INT64)           AS total_weight,
+    (JSON_VALUE(p, '$.isCancelled') IN ('true', '1'))           AS is_cancelled,
+    (JSON_VALUE(p, '$.isTscaCompliant') IN ('true', '1'))       AS is_tsca_compliant,
+    JSON_VALUE(p, '$.customComment')                            AS custom_comment
+
+  FROM ${ref("raw_wayfair_orders")} AS o,
+    UNNEST(JSON_QUERY_ARRAY(o.raw_payload, '$.products')) AS p WITH OFFSET AS p_offset
+  WHERE o.brand = 'AFW'
+),
+
+ranked AS (
+  SELECT *, ROW_NUMBER() OVER (
+    PARTITION BY po_number, part_number ORDER BY _ingested_at DESC
+  ) AS rn
+  FROM parsed
+  WHERE po_number IS NOT NULL AND po_number != ''
+    AND part_number IS NOT NULL AND part_number != ''
+)
+
+SELECT
+  brand,
+  'Wayfair'  AS channel,
+  region,
+  order_channel_type,
+  order_type_raw,
+  po_id, po_number, order_id, supplier_id,
+  po_timestamp, order_date, estimated_ship_date, scheduled_delivery_date,
+  sales_channel_name, delivery_method_code, ship_speed, carrier_code,
+  warehouse_id, warehouse_name, warehouse_supplier_id, warehouse_supplier_name,
+  ship_to_city, ship_to_state, ship_to_country, ship_to_postal_code,
+  line_index, part_number, sku, product_name,
+  quantity, unit_price, line_total, piece_count, total_weight,
+  is_cancelled, is_tsca_compliant, custom_comment,
+  _ingested_at AS _loaded_at
+FROM ranked
+WHERE rn = 1
