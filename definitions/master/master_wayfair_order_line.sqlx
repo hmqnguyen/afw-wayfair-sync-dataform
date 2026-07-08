@@ -1,9 +1,9 @@
 config {
   type: "incremental",
   schema: dataform.projectConfig.vars.master_dataset,
-  description: "Master Wayfair order LINE (bảng con) — 1 dòng/line item, giữ lịch sử. uniqueKey (po_number, part_number). FK po_number → master_wayfair_order. Incremental theo _loaded_at.",
+  description: "Master Wayfair order LINE (bảng con) — 1 dòng/line item, giữ lịch sử. uniqueKey (po_number, line_index). FK po_number → master_wayfair_order. Incremental theo _loaded_at.",
   tags: ["master", "wayfair"],
-  uniqueKey: ["po_number", "part_number"],
+  uniqueKey: ["po_number", "line_index"],
   bigquery: { partitionBy: "order_date", clusterBy: ["sku"] }
 }
 

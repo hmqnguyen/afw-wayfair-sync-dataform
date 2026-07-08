@@ -1,7 +1,7 @@
 config {
   type: "incremental",
   schema: dataform.projectConfig.vars.fact_dataset,
-  description: "Fact order line Wayfair — mỗi dòng = 1 line item. line_uid = hash(po_number|part_number). Join master_wayfair_order_line (con) + master_wayfair_order (cha) lấy region, order_channel_type, warehouse, địa chỉ giao.",
+  description: "Fact order line Wayfair — mỗi dòng = 1 line item. line_uid = hash(po_number|part_number|line_index). Join master_wayfair_order_line (con) + master_wayfair_order (cha) lấy region, order_channel_type, warehouse, địa chỉ giao.",
   tags: ["fact", "wayfair"],
   uniqueKey: ["line_uid"],
   bigquery: {
@@ -12,7 +12,7 @@ config {
 }
 
 SELECT
-  TO_HEX(MD5(CONCAT(l.po_number, '|', IFNULL(l.part_number, '')))) AS line_uid,
+  TO_HEX(MD5(CONCAT(l.po_number, '|', IFNULL(l.part_number, ''), '|', CAST(l.line_index AS STRING)))) AS line_uid,
   l.brand,
   l.channel,
   h.region,
