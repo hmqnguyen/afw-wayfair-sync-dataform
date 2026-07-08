@@ -1,0 +1,121 @@
+config {
+  type: "table",
+  schema: dataform.projectConfig.vars.staging_dataset,
+  description: "Staging Wayfair order HEADER (bảng cha) — 1 dòng/PO. Làm phẳng TẤT CẢ object (customer, shipTo, billTo, warehouse+address+supplier, shippingInfo agents, billingInfo). Dedupe theo po_number. Products tách sang stg_wayfair_order_line.",
+  tags: ["staging", "wayfair"],
+  bigquery: { partitionBy: "order_date", clusterBy: ["po_number"] }
+}
+
+WITH parsed AS (
+  SELECT
+    o.brand,
+    o._ingested_at,
+
+    -- ── Định danh PO ──
+    SAFE_CAST(JSON_VALUE(o.raw_payload, '$.id') AS INT64)         AS po_id,
+    JSON_VALUE(o.raw_payload, '$.poNumber')                       AS po_number,
+    SAFE_CAST(JSON_VALUE(o.raw_payload, '$.orderId') AS INT64)    AS order_id,
+    JSON_VALUE(o.raw_payload, '$.storePrefix')                    AS store_prefix,
+
+    -- ── Kênh ──
+    'Wayfair'                                                     AS channel,
+    JSON_VALUE(o.raw_payload, '$.salesChannelName')              AS sales_channel_name,
+    CASE WHEN JSON_VALUE(o.raw_payload, '$.salesChannelName') LIKE '%Canada%' THEN 'CA' ELSE 'US' END AS region,
+    JSON_VALUE(o.raw_payload, '$.orderType')                     AS order_type_raw,
+    CASE WHEN UPPER(IFNULL(JSON_VALUE(o.raw_payload, '$.orderType'), '')) = 'B2B' THEN 'B2B' ELSE 'B2C' END AS order_channel_type,
+
+    -- ── Thời gian ──
+    ${wayfair.ts("JSON_VALUE(o.raw_payload, '$.poDate')")}       AS po_timestamp,
+    DATE(${wayfair.ts("JSON_VALUE(o.raw_payload, '$.poDate')")}) AS order_date,
+    ${wayfair.ts("JSON_VALUE(o.raw_payload, '$.estimatedShipDate')")}     AS estimated_ship_date,
+    ${wayfair.ts("JSON_VALUE(o.raw_payload, '$.scheduledDeliveryDate')")} AS scheduled_delivery_date,
+    JSON_VALUE(o.raw_payload, '$.deliveryMethodCode')            AS delivery_method_code,
+    JSON_VALUE(o.raw_payload, '$.packingSlipUrl')                AS packing_slip_url,
+
+    -- ── Supplier (cấp PO, top-level) ──
+    SAFE_CAST(JSON_VALUE(o.raw_payload, '$.supplierId') AS INT64) AS supplier_id,
+    JSON_VALUE(o.raw_payload, '$.supplierName')                  AS supplier_name,
+    JSON_VALUE(o.raw_payload, '$.supplierAddress1')             AS supplier_address1,
+    JSON_VALUE(o.raw_payload, '$.supplierAddress2')             AS supplier_address2,
+    JSON_VALUE(o.raw_payload, '$.supplierAddress3')             AS supplier_address3,
+    JSON_VALUE(o.raw_payload, '$.supplierCity')                AS supplier_city,
+    JSON_VALUE(o.raw_payload, '$.supplierState')               AS supplier_state,
+    JSON_VALUE(o.raw_payload, '$.supplierPostalCode')          AS supplier_postal_code,
+
+    -- ── Customer (người mua cuối) ──
+    JSON_VALUE(o.raw_payload, '$.customerName')                 AS customer_name,
+    JSON_VALUE(o.raw_payload, '$.customerAddress1')            AS customer_address1,
+    JSON_VALUE(o.raw_payload, '$.customerAddress2')            AS customer_address2,
+    JSON_VALUE(o.raw_payload, '$.customerCity')               AS customer_city,
+    JSON_VALUE(o.raw_payload, '$.customerState')              AS customer_state,
+    JSON_VALUE(o.raw_payload, '$.customerPostalCode')         AS customer_postal_code,
+    JSON_VALUE(o.raw_payload, '$.customerCountry')            AS customer_country,
+    JSON_VALUE(o.raw_payload, '$.customerEmail')              AS customer_email,
+
+    -- ── shippingInfo (làm phẳng, gồm 3 agent) ──
+    JSON_VALUE(o.raw_payload, '$.shippingInfo.shipSpeed')                  AS ship_speed,
+    JSON_VALUE(o.raw_payload, '$.shippingInfo.carrierCode')               AS carrier_code,
+    JSON_VALUE(o.raw_payload, '$.shippingInfo.poolPointAgent.id')         AS poolpoint_agent_id,
+    JSON_VALUE(o.raw_payload, '$.shippingInfo.poolPointAgent.name')       AS poolpoint_agent_name,
+    JSON_VALUE(o.raw_payload, '$.shippingInfo.crossDockAgent.id')         AS crossdock_agent_id,
+    JSON_VALUE(o.raw_payload, '$.shippingInfo.crossDockAgent.name')       AS crossdock_agent_name,
+    JSON_VALUE(o.raw_payload, '$.shippingInfo.deliveryAgent.id')          AS delivery_agent_id,
+    JSON_VALUE(o.raw_payload, '$.shippingInfo.deliveryAgent.name')        AS delivery_agent_name,
+
+    -- ── warehouse (làm phẳng: warehouse + address + supplier) ──
+    JSON_VALUE(o.raw_payload, '$.warehouse.id')                          AS warehouse_id,
+    JSON_VALUE(o.raw_payload, '$.warehouse.name')                        AS warehouse_name,
+    JSON_VALUE(o.raw_payload, '$.warehouse.address.name')               AS warehouse_addr_name,
+    JSON_VALUE(o.raw_payload, '$.warehouse.address.address1')           AS warehouse_addr_address1,
+    JSON_VALUE(o.raw_payload, '$.warehouse.address.address2')           AS warehouse_addr_address2,
+    JSON_VALUE(o.raw_payload, '$.warehouse.address.address3')           AS warehouse_addr_address3,
+    JSON_VALUE(o.raw_payload, '$.warehouse.address.city')              AS warehouse_addr_city,
+    JSON_VALUE(o.raw_payload, '$.warehouse.address.state')             AS warehouse_addr_state,
+    JSON_VALUE(o.raw_payload, '$.warehouse.address.country')           AS warehouse_addr_country,
+    JSON_VALUE(o.raw_payload, '$.warehouse.address.postalCode')        AS warehouse_addr_postal_code,
+    JSON_VALUE(o.raw_payload, '$.warehouse.address.phoneNumber')       AS warehouse_addr_phone,
+    JSON_VALUE(o.raw_payload, '$.warehouse.supplier.id')              AS warehouse_supplier_id,
+    JSON_VALUE(o.raw_payload, '$.warehouse.supplier.name')            AS warehouse_supplier_name,
+    JSON_VALUE(o.raw_payload, '$.warehouse.supplier.shortName')       AS warehouse_supplier_short_name,
+    JSON_VALUE(o.raw_payload, '$.warehouse.supplier.status')          AS warehouse_supplier_status,
+    JSON_VALUE(o.raw_payload, '$.warehouse.supplier.websiteURL')      AS warehouse_supplier_website_url,
+    JSON_VALUE(o.raw_payload, '$.warehouse.supplier.currency')        AS warehouse_supplier_currency,
+
+    -- ── shipTo ──
+    JSON_VALUE(o.raw_payload, '$.shipTo.name')                        AS ship_to_name,
+    JSON_VALUE(o.raw_payload, '$.shipTo.address1')                   AS ship_to_address1,
+    JSON_VALUE(o.raw_payload, '$.shipTo.address2')                   AS ship_to_address2,
+    JSON_VALUE(o.raw_payload, '$.shipTo.address3')                   AS ship_to_address3,
+    JSON_VALUE(o.raw_payload, '$.shipTo.city')                       AS ship_to_city,
+    JSON_VALUE(o.raw_payload, '$.shipTo.state')                      AS ship_to_state,
+    JSON_VALUE(o.raw_payload, '$.shipTo.country')                    AS ship_to_country,
+    JSON_VALUE(o.raw_payload, '$.shipTo.postalCode')                 AS ship_to_postal_code,
+    JSON_VALUE(o.raw_payload, '$.shipTo.phoneNumber')                AS ship_to_phone,
+
+    -- ── billTo ──
+    JSON_VALUE(o.raw_payload, '$.billTo.name')                        AS bill_to_name,
+    JSON_VALUE(o.raw_payload, '$.billTo.address1')                   AS bill_to_address1,
+    JSON_VALUE(o.raw_payload, '$.billTo.address2')                   AS bill_to_address2,
+    JSON_VALUE(o.raw_payload, '$.billTo.address3')                   AS bill_to_address3,
+    JSON_VALUE(o.raw_payload, '$.billTo.city')                       AS bill_to_city,
+    JSON_VALUE(o.raw_payload, '$.billTo.state')                      AS bill_to_state,
+    JSON_VALUE(o.raw_payload, '$.billTo.country')                    AS bill_to_country,
+    JSON_VALUE(o.raw_payload, '$.billTo.postalCode')                 AS bill_to_postal_code,
+    JSON_VALUE(o.raw_payload, '$.billTo.phoneNumber')                AS bill_to_phone,
+
+    -- ── billingInfo ──
+    JSON_VALUE(o.raw_payload, '$.billingInfo.vatNumber')             AS vat_number
+
+  FROM ${ref("raw_wayfair_orders")} AS o
+  WHERE o.brand = 'AFW'
+),
+
+ranked AS (
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY po_number ORDER BY _ingested_at DESC) AS rn
+  FROM parsed
+  WHERE po_number IS NOT NULL AND po_number != ''
+)
+
+SELECT * EXCEPT(rn, _ingested_at), _ingested_at AS _loaded_at
+FROM ranked
+WHERE rn = 1

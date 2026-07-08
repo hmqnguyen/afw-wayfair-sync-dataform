@@ -1,0 +1,12 @@
+config {
+  type: "incremental",
+  schema: dataform.projectConfig.vars.master_dataset,
+  description: "Master Wayfair order HEADER (bảng cha) — 1 dòng/PO, giữ lịch sử. uniqueKey po_number. Incremental theo _loaded_at.",
+  tags: ["master", "wayfair"],
+  uniqueKey: ["po_number"],
+  bigquery: { partitionBy: "order_date", clusterBy: ["po_number"] }
+}
+
+SELECT *
+FROM ${ref("stg_wayfair_order")}
+${when(incremental(), `WHERE _loaded_at > (SELECT MAX(_loaded_at) FROM ${self()})`)}

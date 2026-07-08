@@ -16,6 +16,23 @@ afw_wayfair_raw (C# ghi)
 **5 dataset** (raw/staging/master/fact/mart) — master TÁCH RIÊNG khỏi fact.
 Dev/prod **CÙNG tên dataset** (không _dev), tách theo project.
 
+## Orders — bảng CHA-CON
+
+Orders tách thành 2 bảng theo quan hệ cha-con (chỉ products tách con, mọi object khác làm phẳng vào cha):
+
+```
+stg_wayfair_order       (CHA)  1 dòng/PO   — header: customer, shipTo, billTo, warehouse+address+supplier, shippingInfo agents, billingInfo (làm phẳng hết)
+    └─ stg_wayfair_order_line (CON) 1 dòng/product — FK po_number, tất cả field của product
+```
+
+| Bảng | Grain | uniqueKey | Quan hệ |
+|---|---|---|---|
+| `master_wayfair_order` | 1/PO | `po_number` | cha |
+| `master_wayfair_order_line` | 1/line | `po_number, part_number` | con, FK `po_number` |
+
+fact join cha-con: `fact_order_line` và `fact_sku_pnl_daily` đọc bảng con rồi LEFT JOIN cha (USING po_number) để lấy `region`, `order_channel_type`, warehouse, địa chỉ giao.
+
+
 ## Cấu trúc
 
 ```

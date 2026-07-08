@@ -1,7 +1,7 @@
 config {
   type: "incremental",
   schema: dataform.projectConfig.vars.fact_dataset,
-  description: "Fact order line Wayfair — mỗi dòng = 1 line item PO. Grain: po_number × part_number. line_uid = hash. Gồm region (US/CA) + order_channel_type (B2B/B2C).",
+  description: "Fact order line Wayfair — mỗi dòng = 1 line item. line_uid = hash(po_number|part_number). Join master_wayfair_order_line (con) + master_wayfair_order (cha) lấy region, order_channel_type, warehouse, địa chỉ giao.",
   tags: ["fact", "wayfair"],
   uniqueKey: ["line_uid"],
   bigquery: {
@@ -12,14 +12,28 @@ config {
 }
 
 SELECT
-  TO_HEX(MD5(CONCAT(po_number, '|', IFNULL(part_number, '')))) AS line_uid,
-  brand, channel, region, order_channel_type,
-  po_number, order_id, order_date,
-  warehouse_id, warehouse_supplier_id,
-  ship_to_country AS dest_country,
-  ship_to_state   AS dest_state,
-  part_number, sku, product_name,
-  quantity, unit_price, line_total, is_cancelled,
-  _loaded_at
-FROM ${ref("master_wayfair_orders")}
-${when(incremental(), `WHERE order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 35 DAY)`)}
+  TO_HEX(MD5(CONCAT(l.po_number, '|', IFNULL(l.part_number, '')))) AS line_uid,
+  l.brand,
+  l.channel,
+  h.region,
+  h.order_channel_type,
+  l.po_number,
+  l.order_id,
+  l.order_date,
+  h.warehouse_id,
+  h.warehouse_supplier_id,
+  h.ship_to_country  AS dest_country,
+  h.ship_to_state    AS dest_state,
+  l.line_index,
+  l.part_number,
+  l.sku,
+  l.product_name,
+  l.quantity,
+  l.unit_price,
+  l.line_total,
+  l.piece_count,
+  l.is_cancelled,
+  l._loaded_at
+FROM ${ref("master_wayfair_order_line")} AS l
+LEFT JOIN ${ref("master_wayfair_order")} AS h USING (po_number)
+${when(incremental(), `WHERE l.order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 35 DAY)`)}

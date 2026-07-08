@@ -1,7 +1,7 @@
 config {
   type: "incremental",
   schema: dataform.projectConfig.vars.fact_dataset,
-  description: "Fact P&L by SKU daily (Wayfair) — tổng hợp từ master_wayfair_orders. Grain: brand × channel × region × order_channel_type × sku × day. Fee columns NULL chờ Wayfair Settlement API. Dùng chung bảng cross-channel.",
+  description: "Fact P&L by SKU daily (Wayfair) — tổng hợp từ master_wayfair_order_line (con) join master_wayfair_order (cha) lấy region + order_channel_type. Grain: brand × channel × region × order_channel_type × sku × day. Fee NULL chờ Settlement. Cross-channel.",
   tags: ["fact", "wayfair"],
   uniqueKey: ["brand", "channel", "region", "order_channel_type", "sku", "day"],
   bigquery: {
@@ -15,19 +15,20 @@ DECLARE target_date_start DATE DEFAULT DATE_SUB(CURRENT_DATE(), INTERVAL 35 DAY)
 
 WITH revenue_agg AS (
   SELECT
-    brand,
-    'Wayfair'          AS channel,
-    region,
-    order_channel_type,
-    sku,
-    order_date         AS day,
-    SUM(COALESCE(quantity, 0))    AS units_sold,
-    SUM(COALESCE(line_total, 0))  AS gross_revenue
-  FROM ${ref("master_wayfair_orders")}
-  WHERE order_date >= target_date_start
-    AND COALESCE(is_cancelled, FALSE) = FALSE
-    AND sku IS NOT NULL AND sku != ''
-  GROUP BY brand, region, order_channel_type, sku, order_date
+    l.brand,
+    'Wayfair'   AS channel,
+    h.region,
+    h.order_channel_type,
+    l.sku,
+    l.order_date  AS day,
+    SUM(COALESCE(l.quantity, 0))    AS units_sold,
+    SUM(COALESCE(l.line_total, 0))  AS gross_revenue
+  FROM ${ref("master_wayfair_order_line")} AS l
+  LEFT JOIN ${ref("master_wayfair_order")} AS h USING (po_number)
+  WHERE l.order_date >= target_date_start
+    AND COALESCE(l.is_cancelled, FALSE) = FALSE
+    AND l.sku IS NOT NULL AND l.sku != ''
+  GROUP BY l.brand, h.region, h.order_channel_type, l.sku, l.order_date
 )
 
 SELECT
