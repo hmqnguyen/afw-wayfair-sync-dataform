@@ -1,0 +1,6 @@
+config {
+  type: "declaration",
+  schema: dataform.projectConfig.vars.raw_dataset,
+  name: "raw_wayfair_orders",
+  description: "Raw table do C# AfwWayfairSync ghi (raw_payload JSON gốc từ Wayfair API). Dataform chỉ ĐỌC."
+}
