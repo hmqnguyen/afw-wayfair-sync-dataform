@@ -1,7 +1,7 @@
 config {
   type: "table",
   schema: dataform.projectConfig.vars.staging_dataset,
-  description: "Staging Wayfair order LINE (bảng con) — UNNEST products[]. 1 dòng/line item. FK po_number → stg_wayfair_order. Dedupe (po_number, part_number). Lấy TẤT CẢ field của product.",
+  description: "Staging Wayfair order LINE (bảng con) — UNNEST products[]. 1 dòng/line item. FK po_number → stg_wayfair_order. Dedupe (po_number, line_index). Lấy TẤT CẢ field của product.",
   tags: ["staging", "wayfair"],
   bigquery: { partitionBy: "order_date", clusterBy: ["sku"] }
 }
@@ -44,7 +44,9 @@ WITH parsed AS (
 ),
 
 ranked AS (
-  SELECT *, ROW_NUMBER() OVER (PARTITION BY po_number, part_number ORDER BY _ingested_at DESC) AS rn
+  -- Dedupe theo (po_number, line_index): xử lý raw row bị nạp trùng (backfill + daily)
+  -- mà VẪN giữ được 2 line trùng part_number trong cùng 1 PO (line_index khác nhau).
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY po_number, line_index ORDER BY _ingested_at DESC) AS rn
   FROM parsed
   WHERE po_number IS NOT NULL AND po_number != ''
     AND part_number IS NOT NULL AND part_number != ''

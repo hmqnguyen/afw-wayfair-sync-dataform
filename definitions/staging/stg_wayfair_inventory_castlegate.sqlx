@@ -1,7 +1,7 @@
 config {
   type: "table",
   schema: dataform.projectConfig.vars.staging_dataset,
-  description: "Staging Wayfair CastleGate inventory SKU-level — parse castleGate + physicalRetail thành 2 channel rows, snapshot theo ngày. Tổng cấp SKU (breakdown theo kho ở bảng _warehouse riêng). Dedupe (sku, inventory_channel, snapshot_date).",
+  description: "Staging Wayfair inventory SKU-level — 1 dòng/biến thể/ngày. KHÓA = supplier_part_number (duy nhất mỗi biến thể; sku KHÔNG duy nhất — 1 sku có nhiều biến thể options khác nhau). Gộp castleGate (cg_*) + physicalRetail (pr_*). Giữ mọi biến thể. Dedupe (supplier_part_number, snapshot_date).",
   tags: ["staging", "wayfair"],
   bigquery: { partitionBy: "snapshot_date", clusterBy: ["sku"] }
 }
@@ -9,63 +9,44 @@ config {
 WITH parsed AS (
   SELECT
     brand, _ingested_at,
-    DATE(_ingested_at)                                                  AS snapshot_date,
-    JSON_VALUE(raw_payload, '$.sku')                                    AS sku,
-    JSON_VALUE(raw_payload, '$.supplierPartNumber')                     AS supplier_part_number,
-    JSON_VALUE(raw_payload, '$.productName')                            AS product_name,
-    JSON_VALUE(raw_payload, '$.options')                               AS options,
-    'castlegate'                                                        AS inventory_channel,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHandQty') AS INT64)                          AS on_hand_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.allocatedQty') AS INT64)                AS allocated_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.unreconciledQty') AS INT64)             AS unreconciled_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStockQty') AS INT64)                  AS in_stock_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.fulfillableQty') AS INT64)      AS fulfillable_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.unfulfillableQty') AS INT64)    AS unfulfillable_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.unfulfillable.expiredQty') AS INT64)    AS expired_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.unfulfillable.heldQty') AS INT64)       AS held_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.unfulfillable.unpickableQty') AS INT64)  AS unpickable_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.unfulfillable.onTransferQty') AS INT64)  AS on_transfer_qty
+    DATE(_ingested_at)                                             AS snapshot_date,
+    JSON_VALUE(raw_payload, '$.supplierPartNumber')               AS supplier_part_number,
+    JSON_VALUE(raw_payload, '$.sku')                              AS sku,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.manufacturerPartId') AS INT64) AS manufacturer_part_id,
+    JSON_VALUE(raw_payload, '$.productName')                      AS product_name,
+    JSON_VALUE(raw_payload, '$.options')                          AS options,
+
+    -- BigQuery KHÔNG so sánh được kiểu JSON bằng != / = (gây lỗi build → bảng rỗng).
+    -- Dùng JSON_TYPE để phân biệt object (có tồn) với JSON null / thiếu path.
+    COALESCE(JSON_TYPE(JSON_QUERY(raw_payload, '$.inventoryPosition.castleGate'))     = 'object', FALSE) AS has_castlegate,
+    COALESCE(JSON_TYPE(JSON_QUERY(raw_payload, '$.inventoryPosition.physicalRetail')) = 'object', FALSE) AS has_physical_retail,
+
+    -- castleGate (cg_*)
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHandQty') AS INT64)                          AS cg_on_hand_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.allocatedQty') AS INT64)                AS cg_allocated_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.unreconciledQty') AS INT64)             AS cg_unreconciled_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStockQty') AS INT64)                  AS cg_in_stock_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.fulfillableQty') AS INT64)      AS cg_fulfillable_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.unfulfillableQty') AS INT64)    AS cg_unfulfillable_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.unfulfillable.expiredQty') AS INT64)     AS cg_expired_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.unfulfillable.heldQty') AS INT64)        AS cg_held_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.unfulfillable.unpickableQty') AS INT64)  AS cg_unpickable_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate.onHand.inStock.unfulfillable.onTransferQty') AS INT64)  AS cg_on_transfer_qty,
+
+    -- physicalRetail (pr_*)
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.physicalRetail.onHandQty') AS INT64)                       AS pr_on_hand_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.physicalRetail.onHand.inStockQty') AS INT64)               AS pr_in_stock_qty,
+    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.physicalRetail.onHand.inStock.fulfillableQty') AS INT64)   AS pr_fulfillable_qty
   FROM ${ref("raw_wayfair_inventory_castlegate")}
   WHERE brand = 'AFW'
-    AND JSON_VALUE(raw_payload, '$.inventoryPosition.castleGate') IS NOT NULL
-
-  UNION ALL
-
-  SELECT
-    brand, _ingested_at,
-    DATE(_ingested_at)                                                  AS snapshot_date,
-    JSON_VALUE(raw_payload, '$.sku')                                    AS sku,
-    JSON_VALUE(raw_payload, '$.supplierPartNumber')                     AS supplier_part_number,
-    JSON_VALUE(raw_payload, '$.productName')                            AS product_name,
-    JSON_VALUE(raw_payload, '$.options')                               AS options,
-    'physical_retail'                                                   AS inventory_channel,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.physicalRetail.onHandQty') AS INT64)                       AS on_hand_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.physicalRetail.onHand.allocatedQty') AS INT64)             AS allocated_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.physicalRetail.onHand.unreconciledQty') AS INT64)          AS unreconciled_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.physicalRetail.onHand.inStockQty') AS INT64)               AS in_stock_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.physicalRetail.onHand.inStock.fulfillableQty') AS INT64)   AS fulfillable_qty,
-    SAFE_CAST(JSON_VALUE(raw_payload, '$.inventoryPosition.physicalRetail.onHand.inStock.unfulfillableQty') AS INT64) AS unfulfillable_qty,
-    CAST(NULL AS INT64) AS expired_qty,
-    CAST(NULL AS INT64) AS held_qty,
-    CAST(NULL AS INT64) AS unpickable_qty,
-    CAST(NULL AS INT64) AS on_transfer_qty
-  FROM ${ref("raw_wayfair_inventory_castlegate")}
-  WHERE brand = 'AFW'
-    AND JSON_VALUE(raw_payload, '$.inventoryPosition.physicalRetail') IS NOT NULL
 ),
 
 ranked AS (
-  SELECT *, ROW_NUMBER() OVER (
-    PARTITION BY sku, inventory_channel, snapshot_date ORDER BY _ingested_at DESC
-  ) AS rn
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY supplier_part_number, snapshot_date ORDER BY _ingested_at DESC) AS rn
   FROM parsed
-  WHERE sku IS NOT NULL AND sku != ''
+  WHERE supplier_part_number IS NOT NULL AND supplier_part_number != ''
 )
 
-SELECT
-  brand, snapshot_date, sku, supplier_part_number, product_name, options,
-  inventory_channel, on_hand_qty, allocated_qty, unreconciled_qty, in_stock_qty,
-  fulfillable_qty, unfulfillable_qty, expired_qty, held_qty, unpickable_qty, on_transfer_qty,
-  _ingested_at AS _loaded_at
+SELECT * EXCEPT(rn, _ingested_at), _ingested_at AS _loaded_at
 FROM ranked
 WHERE rn = 1
