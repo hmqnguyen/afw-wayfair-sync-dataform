@@ -1,6 +1,10 @@
 config {
   type: "incremental",
   schema: dataform.projectConfig.vars.master_dataset,
+  assertions: {
+    uniqueKey: ["supplier_part_number", "snapshot_date"],
+    nonNull: ["supplier_part_number", "snapshot_date"]
+  },
   description: "Master Wayfair Dropship inventory (NM5) — snapshot theo NGÀY. uniqueKey (supplier_part_number, snapshot_date). Incremental theo _loaded_at.",
   tags: ["master", "wayfair"],
   uniqueKey: ["supplier_part_number", "snapshot_date"],

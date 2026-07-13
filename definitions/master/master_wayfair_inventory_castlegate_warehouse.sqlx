@@ -1,6 +1,10 @@
 config {
   type: "incremental",
   schema: dataform.projectConfig.vars.master_dataset,
+  assertions: {
+    uniqueKey: ["supplier_part_number", "warehouse_id", "snapshot_date"],
+    nonNull: ["supplier_part_number", "warehouse_id", "snapshot_date"]
+  },
   description: "Master Wayfair CastleGate inventory WAREHOUSE-level — snapshot theo NGÀY. uniqueKey (supplier_part_number, warehouse_id, snapshot_date).",
   tags: ["master", "wayfair"],
   uniqueKey: ["supplier_part_number", "warehouse_id", "snapshot_date"],

@@ -1,6 +1,10 @@
 config {
   type: "incremental",
   schema: dataform.projectConfig.vars.master_dataset,
+  assertions: {
+    uniqueKey: ["po_number", "line_index"],
+    nonNull: ["po_number", "line_index"]
+  },
   description: "Master Wayfair order LINE (bảng con) — 1 dòng/line item, giữ lịch sử. uniqueKey (po_number, line_index). FK po_number → master_wayfair_order. Incremental theo _loaded_at.",
   tags: ["master", "wayfair"],
   uniqueKey: ["po_number", "line_index"],

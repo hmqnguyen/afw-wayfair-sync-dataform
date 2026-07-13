@@ -1,6 +1,10 @@
 config {
   type: "table",
   schema: dataform.projectConfig.vars.staging_dataset,
+  assertions: {
+    uniqueKey: ["supplier_part_number", "snapshot_date"],
+    nonNull: ["supplier_part_number", "snapshot_date"]
+  },
   description: "Staging Wayfair Dropship inventory (kho NM5) — 1 dòng/biến thể/ngày từ castleGate position. KHÓA supplier_part_number (sku KHÔNG duy nhất). Giữ mọi biến thể. Dedupe (supplier_part_number, snapshot_date).",
   tags: ["staging", "wayfair"],
   bigquery: { partitionBy: "snapshot_date", clusterBy: ["sku"] }

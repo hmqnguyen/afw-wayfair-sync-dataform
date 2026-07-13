@@ -1,6 +1,10 @@
 config {
   type: "table",
   schema: dataform.projectConfig.vars.staging_dataset,
+  assertions: {
+    uniqueKey: ["po_number", "line_index"],
+    nonNull: ["po_number", "line_index"]
+  },
   description: "Staging Wayfair order LINE (bảng con) — UNNEST products[]. 1 dòng/line item. FK po_number → stg_wayfair_order. Dedupe (po_number, line_index). Lấy TẤT CẢ field của product.",
   tags: ["staging", "wayfair"],
   bigquery: { partitionBy: "order_date", clusterBy: ["sku"] }

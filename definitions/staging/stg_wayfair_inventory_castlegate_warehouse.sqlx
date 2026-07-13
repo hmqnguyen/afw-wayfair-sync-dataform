@@ -1,6 +1,10 @@
 config {
   type: "table",
   schema: dataform.projectConfig.vars.staging_dataset,
+  assertions: {
+    uniqueKey: ["supplier_part_number", "warehouse_id", "snapshot_date"],
+    nonNull: ["supplier_part_number", "warehouse_id", "snapshot_date"]
+  },
   description: "Staging Wayfair CastleGate inventory WAREHOUSE-level — UNNEST castleGate.warehouses[]. warehouses[] thực tế CHỈ có onHandQty + warehouseId (int). Khóa (supplier_part_number, warehouse_id, snapshot_date).",
   tags: ["staging", "wayfair"],
   bigquery: { partitionBy: "snapshot_date", clusterBy: ["sku"] }

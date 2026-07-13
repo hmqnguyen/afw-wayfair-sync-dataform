@@ -1,13 +1,18 @@
 config {
   type: "incremental",
   schema: dataform.projectConfig.vars.fact_dataset,
+  assertions: {
+    uniqueKey: ["line_uid"],
+    nonNull: ["line_uid", "order_date"]
+  },
   description: "Fact order line Wayfair — mỗi dòng = 1 line item. line_uid = hash(po_number|part_number|line_index). Join master_wayfair_order_line (con) + master_wayfair_order (cha) lấy region, order_channel_type, warehouse, địa chỉ giao.",
   tags: ["fact", "wayfair"],
   uniqueKey: ["line_uid"],
   bigquery: {
     partitionBy: "order_date",
-    clusterBy: ["channel", "sku"],
-    updatePartitionFilter: "order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 35 DAY)"
+    clusterBy: ["channel", "sku"]
+    // KHÔNG dùng updatePartitionFilter: cập nhật đến muộn (vd đơn cũ bị hủy hôm nay)
+    // có order_date ở partition cũ; giới hạn cửa sổ theo order_date sẽ khiến MERGE bỏ sót.
   }
 }
 
@@ -36,4 +41,7 @@ SELECT
   l._loaded_at
 FROM ${ref("master_wayfair_order_line")} AS l
 LEFT JOIN ${ref("master_wayfair_order")} AS h USING (po_number)
-${when(incremental(), `WHERE l.order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 35 DAY)`)}
+-- Incremental lái theo NGÀY CẬP NHẬT (_loaded_at), KHÔNG theo order_date:
+-- mọi line vừa đổi ở master (kể cả đơn cũ mới bị hủy) đều được nạp lại và
+-- match theo line_uid → MERGE cập nhật đúng (vd is_cancelled: FALSE→TRUE).
+${when(incremental(), `WHERE l._loaded_at > (SELECT MAX(_loaded_at) FROM ${self()})`)}

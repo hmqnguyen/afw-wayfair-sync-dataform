@@ -1,0 +1,57 @@
+config {
+  type: "assertion",
+  schema: dataform.projectConfig.vars.staging_dataset,
+  name: "assert_data_freshness",
+  description: "CỜ ĐỎ: bảng snapshot theo-ngày ĐỨNG YÊN quá lâu ⇒ JOB SYNC ĐÃ CHẾT. assert_no_date_gaps MÙ với ca này (nó lấy MAX từ chính bảng → job chết thì MAX lùi theo → 'không có lỗ hổng').",
+  tags: ["assertion", "wayfair", "data_quality", "freshness"]
+}
+
+/*
+  ═══════════════════════════════════════════════════════════════════════════
+  VÌ SAO CẦN (mirror assert_data_freshness của Amazon)
+
+  Inventory Wayfair (CastleGate + Dropship) là SNAPSHOT hằng ngày:
+  snapshot_date = DATE(_ingested_at). Nếu InventoryCastlegateSync / InventoryDropshipSync
+  ngừng chạy, raw đứng yên → snapshot_date mới nhất lùi dần so với hôm nay, nhưng
+  assert_no_date_gaps VẪN XANH (nó neo vào MAX của chính bảng, không neo CURRENT_DATE).
+
+  ⇒ Assertion này neo vào CURRENT_DATE() để bắt đúng dạng hỏng phổ biến nhất:
+     job đơn giản là NGỪNG CHẠY. Đó là toàn bộ điểm khác biệt.
+
+  NGƯỠNG — inventory sync chạy daily (~3:00/3:15). Độ trễ tự nhiên ~1 ngày + đệm ⇒ 2.
+
+  ⚠️ ĐỪNG nới ngưỡng để "cho pipeline xanh". Assertion đỏ = job THẬT SỰ hỏng.
+  ⚠️ KHÔNG áp cho orders — dữ liệu theo SỰ KIỆN (poDate); ngày không có PO là bình thường.
+     (Nếu muốn canh orders, phải là assertion riêng theo cơ chế event-based.)
+  ═══════════════════════════════════════════════════════════════════════════
+*/
+
+WITH freshness AS (
+  SELECT 'stg_wayfair_inventory_castlegate' AS table_name,
+         MAX(snapshot_date) AS last_date, 2 AS max_lag_days
+  FROM ${ref("stg_wayfair_inventory_castlegate")}
+  UNION ALL
+  SELECT 'stg_wayfair_inventory_dropship',
+         MAX(snapshot_date), 2
+  FROM ${ref("stg_wayfair_inventory_dropship")}
+  UNION ALL
+  SELECT 'stg_wayfair_inventory_castlegate_warehouse',
+         MAX(snapshot_date), 2
+  FROM ${ref("stg_wayfair_inventory_castlegate_warehouse")}
+)
+
+-- Assertion trả về CÁC DÒNG VI PHẠM. Rỗng = pass.
+SELECT
+  table_name,
+  last_date,
+  DATE_DIFF(CURRENT_DATE(), last_date, DAY) AS days_stale,
+  max_lag_days,
+  FORMAT(
+    '🔴 %s đứng yên %d ngày (ngưỡng %d). Job sync ĐÃ CHẾT — chạy lại và điều tra vì sao nó dừng.',
+    table_name,
+    DATE_DIFF(CURRENT_DATE(), last_date, DAY),
+    max_lag_days
+  ) AS action
+FROM freshness
+WHERE last_date IS NULL
+   OR DATE_DIFF(CURRENT_DATE(), last_date, DAY) > max_lag_days

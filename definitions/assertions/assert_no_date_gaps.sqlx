@@ -1,0 +1,61 @@
+config {
+  type: "assertion",
+  schema: dataform.projectConfig.vars.staging_dataset,
+  name: "assert_no_date_gaps",
+  description: "PHÁT HIỆN LỖ HỔNG NGÀY ở STAGING: bảng snapshot theo ngày bị thiếu ngày ở giữa (job sync lỗi/CANCELLED và bỏ qua âm thầm). FAIL nếu có ngày thiếu → pipeline dừng, không để mart tính sai trên data thủng.",
+  tags: ["assertion", "wayfair", "data_quality"]
+}
+
+/*
+  VÌ SAO CẦN (mirror assert_no_date_gaps của Amazon): job sync có thể nuốt lỗi 1 ngày
+  và đi tiếp, để lại lỗ hổng ở GIỮA chuỗi snapshot → mart hụt ngày, mọi trung bình/tổng
+  theo tuần-tháng đều lệch.
+
+  CHỈ áp cho bảng inventory SNAPSHOT hằng ngày (snapshot_date liên tục).
+  KHÔNG áp cho orders — dữ liệu theo SỰ KIỆN (poDate), ngày không phát sinh PO là bình thường.
+
+  Assertion trả về CÁC DÒNG VI PHẠM (ngày thiếu). Rỗng = pass.
+*/
+
+WITH bounds AS (
+  SELECT 'stg_wayfair_inventory_castlegate' AS table_name,
+         MIN(snapshot_date) AS min_d, MAX(snapshot_date) AS max_d
+  FROM ${ref("stg_wayfair_inventory_castlegate")}
+  UNION ALL
+  SELECT 'stg_wayfair_inventory_dropship',
+         MIN(snapshot_date), MAX(snapshot_date)
+  FROM ${ref("stg_wayfair_inventory_dropship")}
+  UNION ALL
+  SELECT 'stg_wayfair_inventory_castlegate_warehouse',
+         MIN(snapshot_date), MAX(snapshot_date)
+  FROM ${ref("stg_wayfair_inventory_castlegate_warehouse")}
+),
+
+-- Ngày ĐÃ CÓ trong từng bảng
+actual AS (
+  SELECT 'stg_wayfair_inventory_castlegate' AS table_name, snapshot_date AS d
+  FROM ${ref("stg_wayfair_inventory_castlegate")} GROUP BY 1, 2
+  UNION ALL
+  SELECT 'stg_wayfair_inventory_dropship', snapshot_date
+  FROM ${ref("stg_wayfair_inventory_dropship")} GROUP BY 1, 2
+  UNION ALL
+  SELECT 'stg_wayfair_inventory_castlegate_warehouse', snapshot_date
+  FROM ${ref("stg_wayfair_inventory_castlegate_warehouse")} GROUP BY 1, 2
+),
+
+-- Toàn bộ ngày ĐÁNG LẼ phải có (từ min → max của chính bảng đó)
+expected AS (
+  SELECT b.table_name, d
+  FROM bounds b, UNNEST(GENERATE_DATE_ARRAY(b.min_d, b.max_d)) AS d
+  WHERE b.min_d IS NOT NULL
+)
+
+-- VI PHẠM = ngày nằm trong khoảng nhưng KHÔNG có dữ liệu
+SELECT
+  e.table_name,
+  e.d AS missing_date
+FROM expected e
+LEFT JOIN actual a
+  ON a.table_name = e.table_name AND a.d = e.d
+WHERE a.d IS NULL
+ORDER BY e.table_name, e.d
