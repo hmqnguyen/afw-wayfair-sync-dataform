@@ -54,6 +54,32 @@ dataform run --tags assertion    # chạy riêng toàn bộ assertion
 
 Assertion trả về CÁC DÒNG VI PHẠM → rỗng = pass; có dòng = FAIL, pipeline dừng.
 
+## 3b. 🔴 BUG assertion PHÁT HIỆN (13/07) — order_date NULL 100%
+
+Khi chạy pipeline, 4 assertion FAIL: `stg_wayfair_order`, `master_wayfair_order`,
+`fact_order_line`, `fact_sku_pnl_daily` (rowConditions nonNull).
+
+**Nguyên nhân gốc:** `includes/wayfair.js` — hàm `ts()` KHÔNG parse được format poDate của Wayfair
+`2026-03-29 21:04:03.000000 +00:00` (microseconds + offset ' +00:00' có dấu cách & dấu hai chấm).
+`SAFE_CAST AS TIMESTAMP` trả NULL với format này; nhánh fallback cũ thiếu `%Ez`. ⇒ `po_timestamp`
+và `order_date` NULL cho **755/755 dòng** → `fact_sku_pnl_daily` dồn hết vào partition NULL (P&L
+theo ngày hỏng âm thầm).
+
+**Sửa:** thêm nhánh `SAFE.PARSE_TIMESTAMP('%Y-%m-%d %H:%M:%E*S %Ez', …)` đứng ĐẦU trong `ts()`.
+Đã verify parse đúng trên data thật + `dataform compile` PASS (41 actions).
+
+**Cần làm sau khi pull fix:** full-refresh lại staging → master → fact → mart để `order_date` được
+điền đúng (rows cũ đang NULL sẽ không tự cập nhật ở master incremental).
+
+> Ghi chú giá trị: đây chính là lý do thêm assertion — một bug tiềm ẩn nghiêm trọng (toàn bộ P&L
+> theo ngày sai) bị phát hiện ngay lần chạy đầu thay vì âm thầm cho ra số sai.
+
+## 3c. assert_data_freshness FAIL ở dev — TRUE POSITIVE (không phải bug code)
+
+Inventory dev đứng ở `2026-07-08` (5 ngày, ngưỡng 2). Đúng như thiết kế: assertion báo dữ liệu cũ.
+Ở dev thường không chạy sync hằng ngày nên đỏ là bình thường; sẽ xanh ở prod khi sync chạy đều.
+Nếu muốn dev khỏi đỏ: chỉ enforce freshness ở prod, hoặc chấp nhận đỏ ở dev.
+
 ## 4. Việc còn lại (chưa làm ở bước này)
 
 - Item 2: build master/fact/mart trong dev rồi chạy `dataform run` để các assertion master/fact
