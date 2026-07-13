@@ -1,6 +1,7 @@
 config {
   type: "table",
   schema: dataform.projectConfig.vars.mart_dataset,
+  name: "mart_wayfair_inventory_daily",
   description: "Mart Wayfair inventory daily — hợp nhất CastleGate + Dropship (NM5) theo (supplier_part_number, snapshot_date). Grain = biến thể sản phẩm (part number). Phục vụ quyết định Castlegate 90-day free storage.",
   tags: ["mart", "wayfair"],
   bigquery: { partitionBy: "snapshot_date", clusterBy: ["sku"] }

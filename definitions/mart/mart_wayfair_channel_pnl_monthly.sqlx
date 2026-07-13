@@ -1,0 +1,86 @@
+config {
+  type: "table",
+  schema: dataform.projectConfig.vars.mart_dataset,
+  name: "mart_wayfair_channel_pnl_monthly",
+  description: "P&L kênh Wayfair theo THÁNG — grain month × brand × channel × region. Mirror mart_amazon_channel_pnl_monthly. Doanh thu wholesale THẬT từ fact_sku_pnl_daily; phí sàn/fulfillment/storage + COGS là PLACEHOLDER (NULL) vì Wayfair CHƯA có SettlementSync và chưa có afw_sku_cogs. Đọc cột data_completeness TRƯỚC.",
+  tags: ["mart", "wayfair", "channel_pnl"],
+  bigquery: { partitionBy: "month", clusterBy: ["brand"] }
+}
+
+/*
+  ═══════════════════════════════════════════════════════════════════════════
+  TẠI SAO CÓ BẢNG NÀY (mirror kiến trúc P&L của Amazon)
+
+  Amazon tách 2 tầng: fact_sku_pnl_daily (grain SKU, có phí cấp SKU) và
+  mart_amazon_channel_pnl_monthly (grain CHANNEL, có ads/storage/freight cấp
+  tài khoản). Wayfair theo cùng khuôn để khi có dữ liệu là ráp thẳng.
+
+  KHÁC BIỆT DỮ LIỆU HIỆN TẠI — nói thẳng để không đọc nhầm:
+    • gross_revenue = giá WHOLESALE (giá Wayfair trả AFW), KHÔNG phải giá bán lẻ.
+    • platform_fee / fulfillment_fee / storage_fee: Wayfair CHƯA có SettlementSync
+      → fact trả NULL → ở đây SUM ra NULL. KHÔNG phải "phí = 0".
+    • cogs: chưa có nguồn afw_sku_cogs (giống Amazon — Nhà Máy 5 chưa cấp unit cost).
+    • ⇒ gross_profit thật CHƯA tính được. Chỉ có doanh thu + khối lượng là THẬT.
+
+  KHI ĐỦ DỮ LIỆU:
+    1. Thêm SettlementSync (Wayfair Settlement API) → fact có platform_fee thật.
+    2. Thêm bảng afw_sku_cogs (sku → unit_cost) → tính cogs = unit_cost × units_sold.
+    3. Bật cột gross_profit + margin_pct ở dưới (đang để NULL có chủ ý).
+  ═══════════════════════════════════════════════════════════════════════════
+*/
+
+WITH monthly AS (
+  SELECT
+    DATE_TRUNC(day, MONTH)                         AS month,
+    brand,
+    channel,
+    region,
+    SUM(units_sold)                                AS units_sold,
+    COUNT(DISTINCT sku)                            AS active_sku_count,
+    SUM(gross_revenue)                             AS gross_revenue,          -- wholesale, THẬT
+    -- Phí (số ÂM khi có) — hiện NULL vì chưa có Settlement. SUM(all NULL)=NULL (đúng).
+    SUM(platform_fee)                              AS platform_fee,
+    SUM(fulfillment_fee)                           AS fulfillment_fee,
+    SUM(storage_fee)                               AS storage_fee,
+    SUM(channel_contribution_margin_pre_cogs)      AS cm_pre_cogs,
+    -- Cờ đầy đủ: có bất kỳ dòng phí không NULL nào trong tháng không?
+    COUNTIF(platform_fee IS NOT NULL)              AS n_rows_with_fee
+  FROM ${ref("fact_sku_pnl_daily")}
+  GROUP BY 1, 2, 3, 4
+)
+
+SELECT
+  month,
+  brand,
+  channel,
+  region,
+
+  -- ── Khối lượng + doanh thu (THẬT)
+  units_sold,
+  active_sku_count,
+  gross_revenue,
+
+  -- ── Phí (PLACEHOLDER — NULL cho tới khi có SettlementSync)
+  platform_fee,
+  fulfillment_fee,
+  storage_fee,
+  CAST(NULL AS NUMERIC)  AS cogs,          -- TODO: afw_sku_cogs.unit_cost × units_sold
+
+  -- ── Contribution margin trước COGS (từ fact). NULL nếu chưa có phí.
+  cm_pre_cogs            AS channel_contribution_margin_pre_cogs,
+
+  -- ── Lợi nhuận gộp THẬT — CHƯA tính được (thiếu phí + COGS). NULL có chủ ý.
+  CAST(NULL AS NUMERIC)  AS gross_profit,        -- = gross_revenue − cogs − |fees|
+  CAST(NULL AS NUMERIC)  AS gross_margin_pct,
+
+  -- ── 🔴 CỜ ĐẦY ĐỦ — ĐỌC TRƯỚC KHI DÙNG BẤT KỲ SỐ NÀO
+  CASE
+    WHEN n_rows_with_fee = 0 THEN 'REVENUE_ONLY_NO_FEES_NO_COGS'
+    ELSE 'HAS_FEES_PENDING_COGS'
+  END                    AS data_completeness,
+  IF(n_rows_with_fee = 0,
+     '⚠️ Chỉ có doanh thu wholesale. Phí sàn + COGS chưa có nguồn → gross_profit = NULL. Bật khi có SettlementSync + afw_sku_cogs.',
+     '⚠️ Có phí nhưng chưa có COGS → gross_profit vẫn NULL.')  AS completeness_note,
+
+  CURRENT_TIMESTAMP()    AS _generated_at
+FROM monthly
