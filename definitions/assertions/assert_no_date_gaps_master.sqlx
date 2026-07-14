@@ -50,9 +50,17 @@ expected AS (
   SELECT b.table_name, d
   FROM bounds b, UNNEST(GENERATE_DATE_ARRAY(b.min_d, b.max_d)) AS d
   WHERE b.min_d IS NOT NULL
+),
+
+-- ── KNOWN GAPS — downtime inventory sync ĐÃ XÁC NHẬN & CHẤP NHẬN ─────────────
+-- Master kế thừa gap từ staging (snapshot point-in-time, không backfill được).
+-- Giữ ĐỒNG BỘ với known_gaps trong assert_no_date_gaps.sqlx (cùng dải ngày).
+known_gaps AS (
+  -- 2026-07-09 → 2026-07-13: inventory sync không chạy (xác nhận 2026-07-14).
+  SELECT d FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2026-07-09', DATE '2026-07-13')) AS d
 )
 
--- VI PHẠM = ngày trong khoảng nhưng KHÔNG có dữ liệu
+-- VI PHẠM = ngày trong khoảng, KHÔNG có dữ liệu, và KHÔNG thuộc known_gaps
 SELECT
   e.table_name,
   e.d AS missing_date
@@ -60,4 +68,5 @@ FROM expected e
 LEFT JOIN actual a
   ON a.table_name = e.table_name AND a.d = e.d
 WHERE a.d IS NULL
+  AND e.d NOT IN (SELECT d FROM known_gaps)
 ORDER BY e.table_name, e.d
