@@ -1,0 +1,58 @@
+config {
+  type: "assertion",
+  schema: dataform.projectConfig.vars.raw_dataset,
+  name: "assert_orders_ingest_freshness",
+  description: "CỜ ĐỎ: OrdersSync ĐÃ NGỪNG CHẠY. Orders là dữ liệu SỰ KIỆN (order_date cũ là hợp lệ) nên assert_data_freshness (theo data-date) MÙ với ca này. Assertion này neo vào MAX(_ingested_at) — thời điểm nạp raw lần cuối — để bắt job sync chết.",
+  tags: ["assertion", "wayfair", "data_quality", "freshness", "orders"]
+}
+
+/*
+  ═══════════════════════════════════════════════════════════════════════════
+  VÌ SAO CẦN (bài học F18 của Amazon, áp cho dữ liệu SỰ KIỆN)
+
+  assert_data_freshness canh MAX(snapshot_date) — chỉ đúng cho bảng SNAPSHOT
+  (inventory). Với ORDERS, order_date là ngày SỰ KIỆN: không có đơn mới vài ngày
+  là chuyện bình thường → không thể dùng order_date để biết sync còn sống.
+
+  ⇒ Nếu OrdersSync lặng lẽ ngừng chạy, KHÔNG assertion nào bắt được: order_date
+     cũ trông vẫn "hợp lệ". Triệu chứng đã thấy live 14/07: raw ingest 08/07 nhưng
+     đơn mới nhất chỉ tới 31/03 — không có gì báo động.
+
+  ⇒ Assertion này canh MAX(_ingested_at) của raw_wayfair_orders so với CURRENT.
+     Job sync ghi raw mỗi lần chạy (dù 0 đơn mới vẫn nên có heartbeat) → _ingested_at
+     đứng yên = job đã chết.
+
+  NGƯỠNG: OrdersSync chạy daily (~3:00). Trễ tự nhiên ~1 ngày + đệm ⇒ 2.
+
+  ⚠️ ĐỪNG nới ngưỡng để cho pipeline xanh. Đỏ = OrdersSync THẬT SỰ đã dừng —
+     điều tra Cloud Scheduler / Cloud Run vì sao ngừng trigger (root cause A-03
+     bên Amazon: nhiều job "lặng lẽ ngừng chạy").
+  ⚠️ Ở DEV (nạp từ backfill, không chạy daily) assertion này sẽ đỏ — bình thường.
+     Cân nhắc chỉ enforce ở prod.
+  ═══════════════════════════════════════════════════════════════════════════
+*/
+
+WITH freshness AS (
+  SELECT
+    'raw_wayfair_orders'                                       AS table_name,
+    MAX(_ingested_at)                                          AS last_ingest,
+    2                                                          AS max_lag_days
+  FROM ${ref("raw_wayfair_orders")}
+  WHERE brand = 'AFW'
+)
+
+-- Assertion trả về CÁC DÒNG VI PHẠM. Rỗng = pass.
+SELECT
+  table_name,
+  last_ingest,
+  DATE_DIFF(CURRENT_DATE(), DATE(last_ingest), DAY)           AS days_since_ingest,
+  max_lag_days,
+  FORMAT(
+    '🔴 %s không được nạp %d ngày (ngưỡng %d). OrdersSync ĐÃ CHẾT — chạy lại và điều tra Cloud Scheduler/Run.',
+    table_name,
+    DATE_DIFF(CURRENT_DATE(), DATE(last_ingest), DAY),
+    max_lag_days
+  )                                                           AS action
+FROM freshness
+WHERE last_ingest IS NULL
+   OR DATE_DIFF(CURRENT_DATE(), DATE(last_ingest), DAY) > max_lag_days

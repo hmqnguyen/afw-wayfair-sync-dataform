@@ -117,7 +117,7 @@ WITH parsed AS (
 ranked AS (
   SELECT *, ROW_NUMBER() OVER (PARTITION BY po_number ORDER BY _ingested_at DESC) AS rn
   FROM parsed
-  WHERE po_number IS NOT NULL AND po_number != ''
+  WHERE NULLIF(TRIM(po_number), '') IS NOT NULL
 )
 
 SELECT * EXCEPT(rn, _ingested_at), _ingested_at AS _loaded_at

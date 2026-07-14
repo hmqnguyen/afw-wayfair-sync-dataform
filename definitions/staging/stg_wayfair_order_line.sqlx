@@ -52,8 +52,8 @@ ranked AS (
   -- mà VẪN giữ được 2 line trùng part_number trong cùng 1 PO (line_index khác nhau).
   SELECT *, ROW_NUMBER() OVER (PARTITION BY po_number, line_index ORDER BY _ingested_at DESC) AS rn
   FROM parsed
-  WHERE po_number IS NOT NULL AND po_number != ''
-    AND part_number IS NOT NULL AND part_number != ''
+  WHERE NULLIF(TRIM(po_number), '') IS NOT NULL
+    AND NULLIF(TRIM(part_number), '') IS NOT NULL
 )
 
 SELECT * EXCEPT(rn, _ingested_at), _ingested_at AS _loaded_at

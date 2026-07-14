@@ -43,7 +43,7 @@ revenue_agg AS (
     MAX(l._loaded_at)  AS _src_loaded_at
   FROM ${ref("master_wayfair_order_line")} AS l
   LEFT JOIN ${ref("master_wayfair_order")} AS h USING (po_number)
-  WHERE l.sku IS NOT NULL AND l.sku != ''
+  WHERE NULLIF(TRIM(l.sku), '') IS NOT NULL
     ${when(incremental(), `AND l.order_date IN (SELECT day FROM affected_days)`)}
   GROUP BY l.brand, h.region, h.order_channel_type, l.sku, l.order_date
 )

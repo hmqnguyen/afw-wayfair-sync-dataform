@@ -48,7 +48,7 @@ WITH parsed AS (
 ranked AS (
   SELECT *, ROW_NUMBER() OVER (PARTITION BY supplier_part_number, snapshot_date ORDER BY _ingested_at DESC) AS rn
   FROM parsed
-  WHERE supplier_part_number IS NOT NULL AND supplier_part_number != ''
+  WHERE NULLIF(TRIM(supplier_part_number), '') IS NOT NULL
 )
 
 SELECT * EXCEPT(rn, _ingested_at), _ingested_at AS _loaded_at
